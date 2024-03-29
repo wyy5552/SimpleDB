@@ -2,7 +2,18 @@ const fs = require("fs");
 const fsPromises = fs.promises;
 const lockfile = require("proper-lockfile");
 const { EventEmitter } = require("events");
-
+/**
+1. 创建 SimpleDB 实例：通过 new SimpleDB(options) 创建一个新的数据库实例，其中 options 是一个包含配置选项的对象。
+2. 文件初始化：在创建 SimpleDB 实例时，会检查数据库文件是否存在，如果不存在则会创建一个新的文件。
+3. 内存缓存：可以通过 options.useCache 配置项来决定是否使用内存缓存。如果设置为 false，则所有操作都会直接读写文件，而不使用内存缓存。
+4. 批量操作：SimpleDB 类提供了 batchWrite 和 batchRead 方法，用于执行批量写入和批量读取操作。
+5. 分页支持：SimpleDB 类提供了 readPage 方法，用于分页读取数据。
+6. 错误处理：在执行操作时，如果遇到错误，会抛出异常。
+7. 数据验证：在执行写入操作时，会检查键是否是字符串，如果不是，则会抛出异常。
+8. 并发控制：SimpleDB 类使用了 proper-lockfile 库来实现文件锁，防止并发写入。
+9. 数据格式：SimpleDB 类使用 JSON 格式来存储数据，每个键值对都会被转换为 JSON 格式并写入到文件中。
+10. 延迟更新：可以通过 options.delayedWrite 配置项来设置延迟写入的时间。如果设置为 0，则不延迟写入。如果设置为大于 0 的值，则在执行写入操作时，会先将数据写入到内存缓存，然后在延迟一段时间后再将数据写入到文件。
+ */
 class SimpleDB extends EventEmitter {
   constructor(options) {
     super();
@@ -133,9 +144,10 @@ class SimpleDB extends EventEmitter {
       if (this.delayedWrite > 0) {
         if (!this.writeScheduled) {
           this.writeScheduled = true;
-          setTimeout(async () => {
+          this.timeoutId = setTimeout(async () => {
             await this._writeToFile(data);
             this.writeScheduled = false;
+            clearTimeout(this.timeoutId);
           }, this.delayedWrite);
         }
       } else {
