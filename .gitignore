@@ -1,0 +1,6 @@
+node_modules
+.cache
+user_data
+combined.log
+error.log
+pnpm-lock.yaml
