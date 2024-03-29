@@ -1,14 +1,19 @@
 {
   "name": "simple-js-db",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "simple-js-db is a lightweight, file-based database system implemented in Node.js. It provides basic CRUD operations (Create, Read, Update, Delete) and some additional features like batch operations and pagination.",
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/wyy5552/SimpleDB.git"
+  },
+  "keywords": [
+    "database"
+  ],
+  "author": "wyy",
   "dependencies": {
     "proper-lockfile": "^4.1.2"
   }
