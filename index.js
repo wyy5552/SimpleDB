@@ -1,6 +1,5 @@
 const fs = require("fs");
 const fsPromises = fs.promises;
-const lockfile = require("proper-lockfile");
 const { EventEmitter } = require("events");
 /**
 1. 创建 SimpleDB 实例：通过 new SimpleDB(options) 创建一个新的数据库实例，其中 options 是一个包含配置选项的对象。
@@ -10,10 +9,10 @@ const { EventEmitter } = require("events");
 5. 分页支持：SimpleDB 类提供了 readPage 方法，用于分页读取数据。
 6. 错误处理：在执行操作时，如果遇到错误，会抛出异常。
 7. 数据验证：在执行写入操作时，会检查键是否是字符串，如果不是，则会抛出异常。
-8. 并发控制：SimpleDB 类使用了 proper-lockfile 库来实现文件锁，防止并发写入。
+8. 并发控制：加入写入队列；
 9. 数据格式：SimpleDB 类使用 JSON 格式来存储数据，每个键值对都会被转换为 JSON 格式并写入到文件中。
 10. 延迟更新：可以通过 options.delayedWrite 配置项来设置延迟写入的时间。如果设置为 0，则不延迟写入。如果设置为大于 0 的值，则在执行写入操作时，会先将数据写入到内存缓存，然后在延迟一段时间后再将数据写入到文件。
- */
+*/
 class SimpleDB extends EventEmitter {
   constructor(options) {
     super();
@@ -21,9 +20,9 @@ class SimpleDB extends EventEmitter {
     this.useCache = options.useCache !== undefined ? options.useCache : true;
     this.delayedWrite =
       options.delayedWrite !== undefined ? options.delayedWrite : 0;
-    this.cacheSize = options.cacheSize || 1000;
     this.dataCache = this.useCache ? new Map() : null;
     this.writeScheduled = false;
+    this.queue = Promise.resolve();
     this.initialized = this._initialize();
   }
 
@@ -49,20 +48,15 @@ class SimpleDB extends EventEmitter {
     if (!this._isValidJson(value))
       throw new Error("Value must be a valid JSON object.");
 
-    const release = await lockfile.lock(this.dbFilePath, { realpath: false });
-    try {
-      const data = this.useCache ? this.dataCache : await this._readFromFile();
-      if (!overwrite && data.has(key)) {
-        throw new Error("Key already exists.");
-      }
-      data.set(key, value);
-      if (this.useCache) {
-        this.dataCache = data;
-      }
-      await this._flushDataIfNeeded(data);
-    } finally {
-      await release();
+    const data = this.useCache ? this.dataCache : await this._readFromFile();
+    if (!overwrite && data.has(key)) {
+      throw new Error("Key already exists.");
     }
+    data.set(key, value);
+    if (this.useCache) {
+      this.dataCache = data;
+    }
+    await this._flushDataIfNeeded(data);
   }
 
   async read(key) {
@@ -70,6 +64,13 @@ class SimpleDB extends EventEmitter {
     if (typeof key !== "string") throw new Error("Key must be a string.");
     const data = this.useCache ? this.dataCache : await this._readFromFile();
     return data.get(key) || null;
+  }
+
+  async readAll() {
+    await this.initialized;
+    const data = this.useCache ? this.dataCache : await this._readFromFile();
+    const obj = Object.fromEntries(data);
+    return obj;
   }
 
   async update(key, value) {
@@ -80,39 +81,29 @@ class SimpleDB extends EventEmitter {
     await this.initialized;
     if (typeof key !== "string") throw new Error("Key must be a string.");
 
-    const release = await lockfile.lock(this.dbFilePath, { realpath: false });
-    try {
-      const data = this.useCache ? this.dataCache : await this._readFromFile();
-      data.delete(key);
-      if (this.useCache) {
-        this.dataCache = data;
-      }
-      await this._flushDataIfNeeded(data);
-    } finally {
-      await release();
+    const data = this.useCache ? this.dataCache : await this._readFromFile();
+    data.delete(key);
+    if (this.useCache) {
+      this.dataCache = data;
     }
+    await this._flushDataIfNeeded(data);
   }
 
   async batchWrite(operations) {
     await this.initialized;
 
-    const release = await lockfile.lock(this.dbFilePath, { realpath: false });
-    try {
-      const data = this.useCache ? this.dataCache : await this._readFromFile();
-      operations.forEach(({ key, value, action }) => {
-        if (action === "create" || action === "update") {
-          data.set(key, value); // Simplified: always overwrite in batch
-        } else if (action === "delete") {
-          data.delete(key);
-        }
-      });
-      if (this.useCache) {
-        this.dataCache = data;
+    const data = this.useCache ? this.dataCache : await this._readFromFile();
+    operations.forEach(({ key, value, action }) => {
+      if (action === "create" || action === "update") {
+        data.set(key, value); // Simplified: always overwrite in batch
+      } else if (action === "delete") {
+        data.delete(key);
       }
-      await this._flushDataIfNeeded(data);
-    } finally {
-      await release();
+    });
+    if (this.useCache) {
+      this.dataCache = data;
     }
+    await this._flushDataIfNeeded(data);
   }
 
   async batchRead(keys) {
@@ -157,25 +148,18 @@ class SimpleDB extends EventEmitter {
   }
 
   async _readFromFile() {
-    const release = await lockfile.lock(this.dbFilePath, { realpath: false });
-    try {
-      const data = await fsPromises.readFile(this.dbFilePath, "utf8");
-      return new Map(Object.entries(JSON.parse(data)));
-    } finally {
-      await release();
-    }
+    const data = await fsPromises.readFile(this.dbFilePath, "utf8");
+    return new Map(Object.entries(JSON.parse(data)));
   }
 
   async _writeToFile(data) {
-    const release = await lockfile.lock(this.dbFilePath, { realpath: false });
-    try {
-      await fsPromises.writeFile(
+    this.queue = this.queue.then(() =>
+      fsPromises.writeFile(
         this.dbFilePath,
         JSON.stringify(Object.fromEntries(data), null, 2)
-      );
-    } finally {
-      await release();
-    }
+      )
+    );
+    await this.queue;
   }
 
   _isValidJson(value) {
