@@ -149,7 +149,11 @@ class SimpleDB extends EventEmitter {
 
   async _readFromFile() {
     const data = await fsPromises.readFile(this.dbFilePath, "utf8");
-    return new Map(Object.entries(JSON.parse(data)));
+    try {
+      return new Map(Object.entries(JSON.parse(data)));
+    } catch (e) {
+      return new Map();
+    }
   }
 
   async _writeToFile(data) {
